@@ -24,20 +24,26 @@ import (
 
 	crdlisters "github.com/kubeflow/spark-operator/pkg/client/listers/sparkoperator.k8s.io/v1beta2"
 	"github.com/kubeflow/spark-operator/pkg/config"
+	"github.com/kubeflow/spark-operator/pkg/util"
 )
 
 // sparkPodEventHandler monitors Spark executor pods and update the SparkApplication objects accordingly.
 type sparkPodEventHandler struct {
+	metrics           *sparkEventMetrics
 	applicationLister crdlisters.SparkApplicationLister
 	// call-back function to enqueue SparkApp key for processing.
 	enqueueFunc func(appKey interface{})
 }
 
 // newSparkPodEventHandler creates a new sparkPodEventHandler instance.
-func newSparkPodEventHandler(enqueueFunc func(appKey interface{}), lister crdlisters.SparkApplicationLister) *sparkPodEventHandler {
+func newSparkPodEventHandler(enqueueFunc func(appKey interface{}), lister crdlisters.SparkApplicationLister, metricsConfig *util.MetricConfig) *sparkPodEventHandler {
 	monitor := &sparkPodEventHandler{
 		enqueueFunc:       enqueueFunc,
 		applicationLister: lister,
+	}
+	if metricsConfig != nil {
+		monitor.metrics = newSparkEventMetrics(metricsConfig)
+		monitor.metrics.registerMetrics()
 	}
 	return monitor
 }
@@ -46,6 +52,9 @@ func (s *sparkPodEventHandler) onPodAdded(obj interface{}) {
 	pod := obj.(*apiv1.Pod)
 	glog.V(2).Infof("Pod %s added in namespace %s.", pod.GetName(), pod.GetNamespace())
 	s.enqueueSparkAppForUpdate(pod)
+	if s.metrics != nil {
+		s.metrics.sparkPodAddedCount.Inc()
+	}
 }
 
 func (s *sparkPodEventHandler) onPodUpdated(old, updated interface{}) {
@@ -57,6 +66,9 @@ func (s *sparkPodEventHandler) onPodUpdated(old, updated interface{}) {
 	}
 	glog.V(2).Infof("Pod %s updated in namespace %s.", updatedPod.GetName(), updatedPod.GetNamespace())
 	s.enqueueSparkAppForUpdate(updatedPod)
+	if s.metrics != nil {
+		s.metrics.sparkPodUpdatedCount.Inc()
+	}
 
 }
 
@@ -76,6 +88,9 @@ func (s *sparkPodEventHandler) onPodDeleted(obj interface{}) {
 	}
 	glog.V(2).Infof("Pod %s deleted in namespace %s.", deletedPod.GetName(), deletedPod.GetNamespace())
 	s.enqueueSparkAppForUpdate(deletedPod)
+	if s.metrics != nil {
+		s.metrics.sparkPodDeletedCount.Inc()
+	}
 }
 
 func (s *sparkPodEventHandler) enqueueSparkAppForUpdate(pod *apiv1.Pod) {
